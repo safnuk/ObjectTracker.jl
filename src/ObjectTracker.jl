@@ -1,5 +1,8 @@
+__precompile__()
 module ObjectTracker
 
-# package code goes here
+export
+    form_blobs
 
+include("Blobs.jl")
 end # module

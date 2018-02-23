@@ -1,5 +1,4 @@
 using ObjectTracker
 using Base.Test
 
-# write your own tests here
-@test 1 == 2
+@time @testset "Test blob creation" begin include("test_blobs.jl") end
