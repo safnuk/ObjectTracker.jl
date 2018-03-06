@@ -7,6 +7,6 @@ objects = Vector{Object}()
 
 blob_series = form_blobs(A)
 for blobs in blob_series
-    match!(objects, blobs; min_area=2)
+    match!(objects, blobs, 1; min_area=2)
     @test length(objects) == 1
 end

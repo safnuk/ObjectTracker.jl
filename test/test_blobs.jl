@@ -14,5 +14,6 @@ for blobs in blob_series
     @test blob.area == 3
     @test blob.source == 1
     @test blob.θ ≈ 0.0
+    @test blob.shape == [0.0 0.0; 0.0 0.0; 0.0 0.0]
 end
 
