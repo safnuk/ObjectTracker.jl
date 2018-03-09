@@ -4,37 +4,56 @@ using DataStructures
 const AGE_FOR_TRANSIENCE = 2
 
 struct Blob
-    centroid::Vector{Float64}
+    x::State
+    y::State
     ratio::Float64
     area::Float64
     source::Int
     θ::Float64
-    shape::Array{Float64, 2}
+    shape1::Array{Float64, 2}
+    shape2::Array{Float64, 2}
     points::Array{Int, 2}
 end
 
 struct Object
-    centroid::Vector{Float64}
+    x::State
+    y::State
     ratio::Float64
     area::Float64
     source::Int
     θ::Float64
-    shape::Array{Float64, 2}
+    shape1::Array{Float64, 2}
+    shape2::Array{Float64, 2}
     points::Array{Int, 2}
     label::Int
     age::Int
 end
-Object(b::Blob, label=-1, age=0) = Object(b.centroid, b.ratio, b.area, b.source, b.θ, b.shape, b.points, label, age)
+Object(b::Blob, label=-1, age=0) = Object(predict(b.x), predict(b.y), b.ratio, b.area, b.source, b.θ, b.shape1, b.shape2, b.points, label, age)
 
-update(object::Object, blob::Blob) = Object(blob, object.label, object.age+1)
+function update(object::Object, b::Blob, λ=0.9)
+    x_velocity = smoothed_velocity_estimate(object.x, b.x, λ)
+    y_velocity = smoothed_velocity_estimate(object.y, b.y, λ)
+    x_observed = State(b.x.p, x_velocity)
+    y_observed = State(b.y.p, y_velocity)
+    Object(update(object.x, x_observed), update(object.y, y_observed),
+           smooth(b.ratio, object.ratio, λ), smooth(b.area, object.area, λ),
+           b.source, smooth(b.θ, object.θ, λ),
+           b.shape1, b.shape2, b.points, object.label, object.age+1)
+end
+
+smooth(x, y, λ) = λ*x + (1 - λ)*y
+
 is_transient(object::Object) = object.age < AGE_FOR_TRANSIENCE
 
 Blob(centroid, ratio, area, source, θ) = Blob(centroid, ratio, area, source, θ,
+                                              Array{Float64}(0, 0),
                                               Array{Float64}(0, 0),
                                               Array{Int}(0, 0))
 
 function Blob(source::Int, points)
     centroid = vec(mean(points, 1)) 
+    x = State(centroid[1], 0.0)
+    y = State(centroid[2], 0.0)
     area = size(points)[1]
     if area > 1
         covariance = cov(points, 1)
@@ -50,14 +69,17 @@ function Blob(source::Int, points)
         v = F[:vectors][:, 1]
         w = F[:vectors][:, 2]
     end
-    basis = hcat(v, w)
+    w .= orientation(v, w) .* w
+    basis1 = hcat(v, w)
+    basis2 = hcat(-v, -w)
     if v[2] == 0.0
         θ = π/2
     else
         θ = atan(v[1] / v[2])
     end
-    shape = calc_shape(points, basis, reshape(centroid, 1, 2))
-    return Blob(centroid, ratio, area, source, θ, shape, points)
+    shape1 = calc_shape(points, basis1, reshape(centroid, 1, 2))
+    shape2 = calc_shape(points, basis2, reshape(centroid, 1, 2))
+    return Blob(x, y, ratio, area, source, θ, shape1, shape2, points)
 end
 
 function combine(b1::Blob, b2::Blob)
@@ -72,14 +94,14 @@ end
 
 function combine(objects)
     transient = true
-    source_votes = DefaultDict(Int, Int, 0)
+    source_votes = DefaultDict(Int, Float64, 0.0)
     for object in objects
         source_votes[object.source] += object.area
         if !is_transient(object)
             transient = false
         end
     end
-    max_vote = 0
+    max_vote = 0.0
     max_source = 0
     for (source, vote) in source_votes
         if vote > max_vote
@@ -93,26 +115,46 @@ function combine(objects)
     return Object(blob, transient)
 end
 
-function distance(x::Object, y::Blob)
-    sqrt(sum((x.centroid - y.centroid).^2))
+function distance(obj::Object, b::Blob)
+    sqrt((obj.x.p - b.x.p)^2 + (obj.y.p - b.y.p)^2)
 end
 
-function cost(x::Object, y::Blob)
+function cost(obj::Object, b::Blob)
+    scale = (1.0 - pdf(obj.x, b.x.p) * pdf(obj.y, b.y.p)) * distance(obj, b)
     c = 0.0
-    c += abs(x.ratio - y.ratio)/x.ratio
-    c += abs(x.area - y.area) / x.area
-    if x.source != y.source
+    c += abs(obj.ratio - b.ratio) / obj.ratio
+    c += abs(obj.area - b.area) / obj.area
+    if obj.source != b.source
         c += 1
     end
-    c += 1 - (cos(x.θ - y.θ))^2
-    c += (1.0 - intersection_over_union(x.shape, y.shape)) / 2
-    return c
+    c += 1 - (cos(obj.θ - b.θ))
+    if obj.shape1[1, :]' * b.shape1[1, :] > 0
+        c += (1.0 - intersection_over_union(obj.shape1, b.shape1)) / 2
+    else
+        c += (1.0 - intersection_over_union(obj.shape1, b.shape2)) / 2
+    end
+    return c * scale
+end
+
+function orientation(x::Vector{T}, y::Vector{T}) where {T}
+    x1 = zeros(3)
+    y1 = zeros(3)
+    x1[1:2] = x
+    y1[1:2] = y
+    z = cross(x1, y1)
+    if z[3] > zero(T)
+        return one(T)
+    else
+        return -one(T)
+    end
 end
 
 function intersection_over_union(x, y)
     if length(x) < length(y)
         return intersection_over_union(y, x)
     end
+    x = x[2:end, :]
+    y = y[2:end, :]
     (a, _) = size(x)
     (b, _) = size(y)
     c1 = (a + 1.0) / 2.0
@@ -170,14 +212,7 @@ function composite_cost_comparison(objects, blob::Blob)
     end
     composite = combine(objects)
     best_match = objects[best_idx]
-    c = 0.0
-    c += abs(composite.ratio - blob.ratio)/best_match.ratio
-    c += abs(composite.area - blob.area) / best_match.area
-    if composite.source != blob.source
-        c += 1
-    end
-    c += 1 - (cos(composite.θ - blob.θ))^2
-    c += (1.0 - intersection_over_union(composite.shape, blob.shape)) / 2
+    c = cost(composite, blob)
     if c < min_cost
         return -1
     else
@@ -205,16 +240,17 @@ function calc_shape(points, basis, centroid)
             push!(ranges[idx], deskewed_points[i, 2])
         end
     end
-    shape = Array{Float64}(max_idx - min_idx + 1, 2)
+    shape = Array{Float64}(max_idx - min_idx + 2, 2)
+    shape[1, :] = basis[:, 1]'
     for (k, idx) in enumerate(min_idx:max_idx)
         if haskey(ranges, idx)
             b = max(ranges[idx]...)
             a = min(ranges[idx]...)
-            shape[k, 1] = (b + a) / 2
-            shape[k, 2] = (b - a) / 2 
+            shape[k+1, 1] = (b + a) / 2
+            shape[k+1, 2] = (b - a) / 2 
         else
-            shape[k, 1] = 0.0
-            shape[k, 2] = 0.0
+            shape[k+1, 1] = 0.0
+            shape[k+1, 2] = 0.0
         end
     end
     return shape

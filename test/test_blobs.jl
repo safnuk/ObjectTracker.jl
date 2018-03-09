@@ -9,11 +9,14 @@ blob_series = form_blobs(A)
 for blobs in blob_series
     @test length(blobs) == 1
     blob = blobs[1]
-    @test blob.centroid[1] == 5
+    @test blob.x.p == 5
     @test blob.ratio ≈ 3.0
     @test blob.area == 3
     @test blob.source == 1
     @test blob.θ ≈ 0.0
-    @test blob.shape == [0.0 0.0; 0.0 0.0; 0.0 0.0]
+    for shape in [blob.shape1, blob.shape2]
+        @test shape[2:end, :] == [0.0 0.0; 0.0 0.0; 0.0 0.0]
+        @test abs([0.0 , 1.0]' * shape[1, :]) == 1.0
+    end
 end
 
