@@ -257,15 +257,15 @@ function calc_shape(points, basis, centroid)
 end
 
 function form_blobs(w::Array{T, 3}) where {T}
-    (t, n, m) = size(w)
+    (n, m, t) = size(w)
     blobs = Vector{Vector{Blob}}(t)
     for j in 1:t
-        blobs[j] = form_blobs(w[j, :, :])
+        blobs[j] = form_blobs(view(w, :, :, j))
     end
     return blobs
 end
 
-function form_blobs(w::Array{T, 2}) where {T}
+function form_blobs(w::AbstractArray{T, 2}) where {T}
     blobs = Vector{Blob}(0)
     C = components(w)
     for (label, points) in C
